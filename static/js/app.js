@@ -1,170 +1,316 @@
-let shapChartInstance = null;
+/* OptiProtein NG front end. One form per page; every input carries data-key = API field name. */
+const PAGE = document.body.dataset.page;
+const REQUIRED = (document.body.dataset.required || "").split(",").filter(Boolean);
+const form = document.getElementById("main-form");
 
-function formatNaira(val) { return "₦" + Math.round(Number(val||0)).toLocaleString("en-NG"); }
+const naira = v => "₦" + Math.round(Number(v || 0)).toLocaleString("en-NG");
+const nairaShort = v => {
+  v = Number(v || 0);
+  if (Math.abs(v) >= 1e9) return "₦" + (v / 1e9).toFixed(2) + "bn";
+  if (Math.abs(v) >= 1e6) return "₦" + (v / 1e6).toFixed(1) + "m";
+  if (Math.abs(v) >= 1e3) return "₦" + Math.round(v / 1e3) + "k";
+  return naira(v);
+};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const $ = id => document.getElementById(id);
 
-// Global Router logic
-async function executeGlobalIntent(promptText) {
-  if (!promptText.trim()) return;
-  const btn = document.getElementById("command-submit-btn");
-  btn.textContent = "Routing..."; btn.disabled = true;
-  try {
-    const res = await fetch("/api/parse-intent/", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: promptText })
-    });
-    const data = await res.json();
-    sessionStorage.setItem('aiIntent', JSON.stringify(data.parsed));
-    
-    if (data.parsed.role === "restaurant" && window.location.pathname !== "/restaurant/") {
-      window.location.href = "/restaurant/";
-    } else if (data.parsed.role === "customer" && window.location.pathname !== "/customer/") {
-      window.location.href = "/customer/";
-    } else if (data.parsed.role === "strategist" && window.location.pathname !== "/") {
-      window.location.href = "/";
-    } else {
-      applyIntentData(); // Same page, just apply
-    }
-  } finally {
-    btn.textContent = "Run Router →"; btn.disabled = false;
-  }
+async function post(url, payload) {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  if (!res.ok) throw new Error("Request failed (" + res.status + ")");
+  return res.json();
 }
 
-document.getElementById("command-submit-btn")?.addEventListener("click", () => {
-  executeGlobalIntent(document.getElementById("command-input").value);
+/* ---------- Form helpers ---------- */
+function inputsFor(key) { return form ? [...form.querySelectorAll(`[data-key="${key}"]`)] : []; }
+function fieldOf(el) { return el.closest(".field") || el.closest(".check"); }
+
+function readForm() {
+  const out = {};
+  form.querySelectorAll("[data-key]").forEach(el => {
+    const k = el.dataset.key, t = el.dataset.type;
+    if (el.type === "radio") { if (el.checked) out[k] = el.value; return; }
+    if (el.type === "checkbox") { out[k] = el.checked; return; }
+    let v = el.value.trim();
+    if (v === "") return;
+    if (t === "int") v = parseInt(v, 10);
+    else if (t === "float") v = parseFloat(v);
+    else if (t === "bool") v = v === "true";
+    out[k] = v;
+  });
+  return out;
+}
+
+function setValue(key, value) {
+  const els = inputsFor(key);
+  if (!els.length) return false;
+  els.forEach(el => {
+    if (el.type === "radio") el.checked = String(el.value) === String(value);
+    else if (el.type === "checkbox") el.checked = !!value;
+    else if (el.tagName === "SELECT") {
+      const want = String(value).toLowerCase();
+      const opt = [...el.options].find(o => o.value.toLowerCase() === want || o.text.toLowerCase() === want);
+      if (opt) el.value = opt.value;
+      else if (key === "channel" || key === "menu_type") return;
+    } else el.value = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  return true;
+}
+
+function mark(key, cls) {
+  inputsFor(key).forEach(el => { const f = fieldOf(el); if (f) { f.classList.remove("heard", "needed", "invalid"); if (cls) f.classList.add(cls); } });
+}
+
+function clearErrors() {
+  form.querySelectorAll(".field-error").forEach(e => e.remove());
+  form.querySelectorAll(".invalid").forEach(f => f.classList.remove("invalid"));
+}
+
+function validate() {
+  clearErrors();
+  const data = readForm();
+  let first = null;
+  const fail = (key, msg) => {
+    const el = inputsFor(key)[0]; const f = el && fieldOf(el); if (!f) return;
+    f.classList.remove("needed"); f.classList.add("invalid");
+    const p = document.createElement("p"); p.className = "field-error"; p.textContent = msg; f.appendChild(p);
+    first = first || el;
+  };
+  REQUIRED.forEach(k => { if (data[k] === undefined || data[k] === "") fail(k, "Add this to continue."); });
+  form.querySelectorAll("input[type=number]").forEach(el => {
+    if (!el.value || el.closest(".invalid")) return;
+    const v = parseFloat(el.value);
+    if (el.min !== "" && v < +el.min) fail(el.dataset.key, `Must be at least ${el.min}.`);
+    else if (el.max !== "" && v > +el.max) fail(el.dataset.key, `Must be ${el.max} or less.`);
+  });
+  if (first) first.focus();
+  return !first;
+}
+
+/* sliders show their value */
+document.querySelectorAll('input[type=range]').forEach(r => {
+  const out = document.querySelector(`output[for="${r.id}"]`);
+  const show = () => { if (out) out.textContent = (r.dataset.key === "beef_price_shock_pct" && +r.value > 0 ? "+" : "") + r.value + "%"; };
+  r.addEventListener("input", show); show();
+});
+/* editing a field removes its "from your text" mark */
+form?.addEventListener("input", e => { const f = e.target.closest?.(".field"); if (f && e.isTrusted) f.classList.remove("heard", "needed"); });
+
+/* ---------- Brief (intent router) ---------- */
+const FIELD_LABELS = { corridor_or_city: "area", age: "age", health_goal: "health goal", max_budget_ngn: "budget per meal", menu_type: "kitchen type",
+  weekly_demand_kg: "weekly volume", has_cold_chain: "storage", pilot_budget_ngn: "pilot budget", monthly_capacity_tons: "monthly supply",
+  beef_price_shock_pct: "beef price change", substitution_pct: "beef replaced", max_calories: "calorie limit" };
+const ROUTES = { restaurant: "/restaurant/", customer: "/customer/", strategist: "/" };
+const PAGE_ROLE = { restaurant: "restaurant", customer: "customer", opportunity: "strategist" };
+
+function applyBrief(parsed, found) {
+  if (!form) return [];
+  const applied = [];
+  found.forEach(k => { if (k !== "role" && setValue(k, parsed[k])) { mark(k, "heard"); applied.push(k); } });
+  const missing = REQUIRED.filter(k => readForm()[k] === undefined || readForm()[k] === "");
+  missing.forEach(k => mark(k, "needed"));
+  const box = $("brief-result");
+  box.hidden = false;
+  const heard = applied.map(k => FIELD_LABELS[k] || k);
+  if (!applied.length) {
+    box.className = "brief-result warn";
+    box.textContent = "We couldn't pick anything out of that. Try adding a place, a number, or what you want to do.";
+  } else if (missing.length) {
+    box.className = "brief-result warn";
+    box.textContent = `Filled in: ${heard.join(", ")}. Still needed: ${missing.map(k => FIELD_LABELS[k] || k).join(", ")}.`;
+    inputsFor(missing[0])[0]?.focus();
+  } else {
+    box.className = "brief-result";
+    box.textContent = `Filled in: ${heard.join(", ")}. Running it now.`;
+    form.requestSubmit();
+  }
+  return applied;
+}
+
+async function runBrief(text) {
+  text = text.trim();
+  if (!text) { $("brief-input").focus(); return; }
+  const btn = $("brief-submit"); btn.disabled = true; btn.textContent = "Reading…";
+  try {
+    const data = await post("/api/parse-intent/", { prompt: text });
+    const role = data.parsed.role;
+    if (role && PAGE_ROLE[PAGE] !== role) {
+      try { sessionStorage.setItem("brief", JSON.stringify({ text, parsed: data.parsed, found: data.found })); } catch (e) {}
+      window.location.href = ROUTES[role];
+      return;
+    }
+    applyBrief(data.parsed, data.found);
+  } catch (err) {
+    const box = $("brief-result"); box.hidden = false; box.className = "brief-result warn"; box.textContent = "Couldn't read that right now. Fill in the form directly.";
+  } finally { btn.disabled = false; btn.textContent = "Fill the form"; }
+}
+$("brief-form").addEventListener("submit", e => { e.preventDefault(); runBrief($("brief-input").value); });
+document.querySelectorAll("[data-example]").forEach(b => b.addEventListener("click", () => { $("brief-input").value = b.dataset.example; runBrief(b.dataset.example); }));
+
+/* voice input where the browser supports it */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function listen(btn, onText, onFail) {
+  if (btn.classList.contains("listening")) return;
+  const rec = new SR(); rec.lang = "en-NG"; rec.interimResults = false;
+  btn.classList.add("listening"); btn.setAttribute("aria-pressed", "true");
+  const done = () => { btn.classList.remove("listening"); btn.setAttribute("aria-pressed", "false"); };
+  rec.onresult = e => onText(e.results[0][0].transcript);
+  rec.onerror = e => { done(); if (onFail) onFail(e.error); };
+  rec.onend = done;
+  rec.start();
+}
+if (SR) {
+  const mic = $("mic-btn"); mic.hidden = false;
+  mic.addEventListener("click", () => listen(mic, t => { $("brief-input").value = t; runBrief(t); }));
+}
+
+/* ---------- Shared results plumbing ---------- */
+function showResults(on) { const e = $("results-empty"), b = $("results-body"); if (e) e.hidden = on; if (b) b.hidden = !on; }
+async function submitWith(btn, fn) {
+  const label = btn.textContent; btn.disabled = true; btn.textContent = "Working…";
+  try { await fn(); } catch (err) { alert(err.message + ". Check your connection and try again."); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+$("reset-btn")?.addEventListener("click", () => {
+  form.reset(); clearErrors();
+  form.querySelectorAll(".heard,.needed").forEach(f => f.classList.remove("heard", "needed"));
+  form.querySelectorAll("input[type=range]").forEach(r => r.dispatchEvent(new Event("input")));
+  if (PAGE === "opportunity") loadOpportunities(); else showResults(false);
 });
 
-// Apply session intent data if present
-function applyIntentData() {
-  const intentStr = sessionStorage.getItem('aiIntent');
-  if (!intentStr) return;
-  const p = JSON.parse(intentStr);
-  sessionStorage.removeItem('aiIntent');
+/* ---------- Mode 1: launch planner ---------- */
+let plan = null, selectedId = null;
 
-  if (document.getElementById("ctrl-sku-cost") && p.sku_cost_ngn) {
-    document.getElementById("ctrl-sku-cost").value = p.sku_cost_ngn;
-    document.getElementById("ctrl-budget").value = p.pilot_budget_ngn || 10000000;
-    if (typeof loadOpportunities === "function") loadOpportunities();
-  }
-  if (document.getElementById("rest-city") && p.corridor_or_city) {
-    document.getElementById("rest-city").value = p.corridor_or_city;
-    document.getElementById("rest-volume").value = p.weekly_demand_kg || 200;
-    if (typeof runRestaurantMatch === "function") runRestaurantMatch();
-  }
-  if (document.getElementById("cust-city") && p.corridor_or_city) {
-    document.getElementById("cust-city").value = p.corridor_or_city;
-    document.getElementById("cust-age").value = p.age || 52;
-    if (typeof runCustomerMatch === "function") runCustomerMatch();
-  }
+async function loadOpportunities() {
+  const data = await post("/api/opportunities/", readForm());
+  plan = data;
+  const ch = $("f-channel");
+  if (ch && ch.options.length === 1) data.channels.forEach(c => ch.add(new Option(c, c)));
+  const p = data.portfolio;
+  $("plan-summary").innerHTML = `
+    <div><b>${nairaShort(p.total_risk_adjusted_90d_profit_ngn)}</b><span>Expected profit in 90 days</span></div>
+    <div><b>${p.total_target_outlets}</b><span>Outlets to win</span></div>
+    <div><b>${p.total_monthly_tons.toFixed(1)} t</b><span>Dry mince per month</span></div>
+    <div><b>${p.budget_utilization_pct}%</b><span>Of launch budget used</span></div>`;
+  $("portfolio").innerHTML = p.feasible ? p.selected_corridors.map(c => `
+    <div class="pilot"><h3>${esc(c.name)}</h3><p>${esc(c.channel)}, ${esc(c.state)} · ${c.target_pilot_outlets} outlets · ${c.monthly_dry_tons.toFixed(1)} t/month</p><b>${nairaShort(c.risk_adjusted_90d_profit_ngn)} in 90 days</b></div>`).join("")
+    : `<p class="no-pilot">No corridor fits these limits. Raise the budget or supply, or lower the minimum margin.</p>`;
+  const picked = new Set(p.selected_corridors.map(c => c.id));
+  const max = 100;
+  $("corridor-body").innerHTML = data.corridors.map(c => `
+    <tr tabindex="0" data-id="${c.id}">
+      <td class="name"><span class="rank">${c.rank}</span><b>${esc(c.lga)}</b>${picked.has(c.id) ? '<span class="picked">Pilot</span>' : ""}<small>${esc(c.channel)} · ${esc(c.state)}</small></td>
+      <td><div class="range"><b>${Math.round(c.opportunity_score)}</b><div class="range-bar" role="img" aria-label="Score ${c.score_ci_low} to ${c.score_ci_high}"><i style="left:${c.score_ci_low / max * 100}%;width:${(c.score_ci_high - c.score_ci_low) / max * 100}%"></i><u style="left:${c.opportunity_score / max * 100}%"></u></div></div></td>
+      <td class="num">${naira(c.protein_spread_ngn)}</td>
+      <td class="num">${c.monthly_dry_tons.toFixed(1)}</td>
+      <td class="num">${nairaShort(c.cac_total_ngn)}</td>
+      <td><span class="conf ${esc(c.data_confidence)}">${esc(c.data_confidence)}</span></td>
+    </tr>`).join("");
+  if (!data.corridors.length) { $("corridor-body").innerHTML = `<tr><td colspan="6">No corridors for this channel.</td></tr>`; $("why").innerHTML = ""; return; }
+  if (!data.corridors.some(c => c.id === selectedId)) selectedId = data.corridors[0].id;
+  renderWhy();
 }
 
-// ---------------- Page 1: Opportunities ----------------
-async function loadOpportunities() {
-  if (!document.getElementById("recalc-opp-btn")) return;
-  const payload = {
-    sku_cost_ngn: parseFloat(document.getElementById("ctrl-sku-cost").value),
-    pilot_budget_ngn: parseFloat(document.getElementById("ctrl-budget").value),
-    monthly_capacity_tons: parseFloat(document.getElementById("ctrl-capacity").value),
-  };
-  const res = await fetch("/api/opportunities/", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-  
-  // Table
-  document.getElementById("corridors-tbody").innerHTML = data.corridors.map(c => `
-    <tr>
-      <td><strong>#${c.rank} ${c.lga}</strong><br><small>${c.state}</small></td>
-      <td><span class="tag-pill">${c.cluster_label}</span></td>
-      <td><strong>${c.opportunity_score}</strong> <small>(${c.score_ci_low}-${c.score_ci_high})</small></td>
-    </tr>
-  `).join("");
+function renderWhy() {
+  const c = plan.corridors.find(x => x.id === selectedId); if (!c) return;
+  document.querySelectorAll("#corridor-body tr").forEach(r => r.classList.toggle("is-selected", +r.dataset.id === selectedId));
+  const rows = Object.entries(c.shap_breakdown).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const m = Math.max(...rows.map(r => Math.abs(r[1])), 1);
+  $("why").innerHTML = `<h3>Why ${esc(c.lga)} scores ${Math.round(c.opportunity_score)}</h3>
+    <p class="muted">Points each factor adds to or takes from the base score. Cluster: ${esc(c.cluster_label)}. ${esc(c.data_source_tag)}.</p>
+    <div class="drivers">${rows.map(([k, v]) => `<div class="driver"><span>${esc(k)}</span><div class="driver-track"><i class="${v >= 0 ? "pos" : "neg"}" style="width:${Math.abs(v) / m * 50}%"></i></div><output>${v > 0 ? "+" : ""}${v}</output></div>`).join("")}</div>`;
+}
+$("corridor-body")?.addEventListener("click", e => { const r = e.target.closest("tr[data-id]"); if (r) { selectedId = +r.dataset.id; renderWhy(); } });
+$("corridor-body")?.addEventListener("keydown", e => { if (e.key === "Enter") e.target.click(); });
 
-  // Knapsack
-  const port = data.portfolio;
-  document.getElementById("kpi-knapsack-profit").textContent = formatNaira(port.total_risk_adjusted_90d_profit_ngn);
-  document.getElementById("knapsack-list").innerHTML = port.selected_corridors.map(c => `
-    <div style="border:1px solid #A7F3D0; padding:10px; margin-bottom:8px; border-radius:6px; background:#ECFDF5;">
-      <strong>${c.lga}</strong> - Profit: ${formatNaira(c.risk_adjusted_90d_profit_ngn)}
-    </div>
-  `).join("");
+if (PAGE === "opportunity") {
+  form.addEventListener("submit", e => { e.preventDefault(); if (validate()) submitWith(form.querySelector("[type=submit]"), loadOpportunities); });
+}
 
-  // Chart (using top corridor)
-  if (data.corridors.length > 0) {
-    const c = data.corridors[0];
-    const ctx = document.getElementById("shapChart").getContext("2d");
-    if (shapChartInstance) shapChartInstance.destroy();
-    shapChartInstance = new Chart(ctx, {
-      type: "bar",
-      data: {
-        labels: Object.keys(c.shap_breakdown),
-        datasets: [{ label: "SHAP pts", data: Object.values(c.shap_breakdown), backgroundColor: "#10B981" }]
-      },
-      options: { indexAxis: "y", responsive: true, maintainAspectRatio: false }
+/* ---------- Mode 2: kitchen to supplier ---------- */
+async function runRestaurant() {
+  const d = await post("/api/match-supplier/", readForm());
+  const c = d.recipe_card;
+  if (!c) { showResults(false); return; }
+  showResults(true);
+  $("recipe-card").innerHTML = `
+    <header><h2>${esc(c.title)}</h2><span>${esc(c.menu_type)} · ${c.blend_pct}% replacement</span></header>
+    <div class="saving"><b>${naira(c.monthly_saved_ngn)} a month</b><span>saved by swapping ${c.blend_pct}% of your beef (${naira(c.annual_naira_saved)} a year)</span></div>
+    <dl class="facts">
+      <div><dt>Supplier</dt><dd>${esc(c.selected_supplier)}, ${esc(c.supplier_city)}</dd></div>
+      <div><dt>Hydrated mince cost</dt><dd>${naira(c.landed_hydrated_cost_ngn_kg)}/kg vs beef ${naira(c.local_beef_cost_ngn_kg)}/kg${d.beef_price_is_market_default ? " (market price)" : ""}</dd></div>
+      <div><dt>Saved per kg replaced</dt><dd>${naira(c.naira_saved_per_kg)}</dd></div>
+      <div><dt>Saved per 100 portions</dt><dd>${naira(c.naira_saved_per_100_portions)}</dd></div>
+      <div><dt>Carbon avoided</dt><dd>${Math.round(c.weekly_co2e_avoided_kg).toLocaleString()} kg CO₂e a week</dd></div>
+      <div><dt>Storage</dt><dd>${esc(c.cold_chain_advantage)}</dd></div>
+    </dl>
+    <div class="steps"><p><b>Hydrate:</b> ${esc(c.hydration_protocol)}</p><p><b>Season with:</b> ${esc(c.recommended_spices)}</p></div>`;
+  $("hub-list").innerHTML = d.ranked_hubs.map((h, i) => `
+    <article class="${i === 0 ? "top" : ""}">
+      <div><h3>${esc(h.name)}</h3>
+        <p class="meta">${esc(h.city)}, ${esc(h.state)} · ${h.distance_km} km · ${h.lead_time_days} day lead time · ${esc(h.contact_phone)}</p>
+        <p class="meta">${h.nafdac ? '<span class="flag ok">NAFDAC registered</span>' : '<span class="flag warn">Not NAFDAC registered</span>'}${h.capacity_ok ? "" : '<span class="flag warn">May not cover your volume</span>'}</p></div>
+      <div class="price"><b>${naira(h.landed_hydrated_ngn_kg)}/kg</b><span class="meta">${h.savings_vs_beef_pct}% below beef</span></div>
+    </article>`).join("");
+  $("dish-list").innerHTML = d.top_dishes.map(x => `
+    <article><h3>${esc(x.dish_name)}</h3><p>${esc(x.blend_ratio)} blend · ${esc(x.spices)}</p><p>${esc(x.texture_note)}</p><p class="save">Saves ${naira(x.naira_saved_per_100_portions)} per 100 portions</p></article>`).join("");
+}
+if (PAGE === "restaurant") {
+  form.addEventListener("submit", e => { e.preventDefault(); if (validate()) submitWith(form.querySelector("[type=submit]"), runRestaurant); });
+}
+
+/* ---------- Mode 3: diner ---------- */
+async function runCustomer() {
+  const payload = readForm();
+  const d = await post("/api/match-customer/", payload);
+  showResults(true);
+  $("header-signal-count").textContent = d.total_demand_signals;
+  $("results-title").textContent = "Best matches in " + (payload.corridor_or_city || "your area");
+  $("results-sub").textContent = d.matches.length + " restaurants ranked for you";
+  $("match-list").innerHTML = d.matches.map(r => `
+    <li>
+      <div class="match-score">${r.match_pct}<small>match</small></div>
+      <div class="match-main"><h3>${esc(r.name)}</h3><p class="dish">${esc(r.signature_dish)}</p><p class="where">${esc(r.address)}</p>
+        <div class="reasons">${r.reasons.map(x => `<span>${esc(x)}</span>`).join("")}</div></div>
+      <div class="match-facts"><b class="${r.within_budget ? "" : "over"}">${naira(r.dish_price_ngn)}</b><span>${r.calories} kcal</span><span>${r.cholesterol_reduction_pct}% less cholesterol</span><span>Rated ${r.rating}</span></div>
+    </li>`).join("");
+  $("signal-feed").innerHTML = d.recent_signals.map(s => `<li><b>${esc(s.city_or_lga)}</b><span>${esc(s.health_goal)} · up to ${naira(s.max_budget_ngn)}</span><time>${esc(s.created_at)}</time></li>`).join("");
+}
+if (PAGE === "customer") {
+  form.addEventListener("submit", e => { e.preventDefault(); if (validate()) submitWith(form.querySelector("[type=submit]"), runCustomer); });
+
+  /* speak your needs: fill this form directly, whatever the router thinks the role is */
+  if (SR) {
+    $("voice-card").hidden = false;
+    const vb = $("voice-btn");
+    vb.addEventListener("click", () => listen(vb, async text => {
+      $("brief-input").value = text;
+      try { const d = await post("/api/parse-intent/", { prompt: text }); applyBrief(d.parsed, d.found); }
+      catch (e) { const box = $("brief-result"); box.hidden = false; box.className = "brief-result warn"; box.textContent = "Couldn't read that. Try again or type it in."; }
+    }, err => {
+      const box = $("brief-result"); box.hidden = false; box.className = "brief-result warn";
+      box.textContent = err === "not-allowed" ? "Allow microphone access in your browser to use voice." : "Didn't catch that. Tap the mic and try again.";
+    }));
+  }
+
+  /* read the top matches aloud */
+  if (window.speechSynthesis) {
+    const sp = $("speak-btn"); sp.hidden = false;
+    sp.addEventListener("click", () => {
+      if (speechSynthesis.speaking) { speechSynthesis.cancel(); sp.textContent = "Read aloud"; return; }
+      const top = [...document.querySelectorAll("#match-list li")].slice(0, 3).map((li, i) =>
+        `Number ${i + 1}: ${li.querySelector("h3").textContent}. ${li.querySelector(".dish").textContent}, ${li.querySelector(".match-facts b").textContent.replace("₦", "").replace(",", "")} naira.`);
+      const u = new SpeechSynthesisUtterance("Your top matches. " + top.join(" "));
+      u.lang = "en-NG"; u.onend = u.onerror = () => { sp.textContent = "Read aloud"; };
+      sp.textContent = "Stop"; speechSynthesis.speak(u);
     });
   }
 }
-document.getElementById("recalc-opp-btn")?.addEventListener("click", loadOpportunities);
 
-// ---------------- Page 2: Restaurant ----------------
-async function runRestaurantMatch(e) {
-  if (e) e.preventDefault();
-  if (!document.getElementById("restaurant-form")) return;
-  const payload = {
-    corridor_or_city: document.getElementById("rest-city").value,
-    weekly_demand_kg: parseFloat(document.getElementById("rest-volume").value),
-    has_cold_chain: document.getElementById("rest-cold-chain").value === "true"
-  };
-  const res = await fetch("/api/match-supplier/", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-  const rc = data.recipe_card;
-  
-  document.getElementById("recipe-body").innerHTML = `
-    <h3>${rc.title}</h3>
-    <p><strong>Supplier:</strong> ${rc.selected_supplier}</p>
-    <p><strong>Landed Cost:</strong> ₦${Math.round(rc.landed_hydrated_cost_ngn_kg)}/kg vs Beef ₦${rc.local_beef_cost_ngn_kg}</p>
-    <p><strong>Protocol:</strong> ${rc.hydration_protocol}</p>
-    <p><strong>Save per 100 meals:</strong> ${formatNaira(rc.naira_saved_per_100_portions)}</p>
-  `;
-  document.getElementById("supplier-hubs-list").innerHTML = data.ranked_hubs.map(h => `
-    <div class="rest-card"><strong>${h.name} (${h.city})</strong><br><small>Hydrated: ₦${Math.round(h.landed_hydrated_ngn_kg)}/kg</small></div>
-  `).join("");
-}
-document.getElementById("restaurant-form")?.addEventListener("submit", runRestaurantMatch);
-
-// ---------------- Page 3: Customer ----------------
-async function runCustomerMatch(e) {
-  if (e) e.preventDefault();
-  if (!document.getElementById("customer-form")) return;
-  const payload = {
-    corridor_or_city: document.getElementById("cust-city").value,
-    age: parseInt(document.getElementById("cust-age").value),
-    health_goal: document.getElementById("cust-goal").value,
-    log_signal: !!e // only log if user clicked submit explicitly
-  };
-  const res = await fetch("/api/match-customer/", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-  
-  document.getElementById("customer-restaurants-list").innerHTML = data.matches.map(r => `
-    <div class="rest-card">
-      <strong>${r.name}</strong> <span class="tag-pill">${r.match_pct}% Match</span><br>
-      <small>${r.signature_dish} - ₦${r.dish_price_ngn}</small><br>
-      <small class="text-emerald">Tags: ${r.health_tags.join(", ")}</small>
-    </div>
-  `).join("");
-
-  document.getElementById("signal-feed-list").innerHTML = data.recent_signals.map(s => `
-    <li><strong>${s.city_or_lga}</strong> <span>${s.health_goal}</span></li>
-  `).join("");
-}
-document.getElementById("customer-form")?.addEventListener("submit", runCustomerMatch);
-
+/* ---------- Boot ---------- */
 window.addEventListener("DOMContentLoaded", () => {
-  applyIntentData();
-  if (document.getElementById("recalc-opp-btn")) loadOpportunities();
-  if (document.getElementById("restaurant-form")) runRestaurantMatch();
-  if (document.getElementById("customer-form")) runCustomerMatch();
+  let brief = null;
+  try { brief = JSON.parse(sessionStorage.getItem("brief") || "null"); sessionStorage.removeItem("brief"); } catch (e) {}
+  if (PAGE === "opportunity") loadOpportunities().then(() => { if (brief) { $("brief-input").value = brief.text; applyBrief(brief.parsed, brief.found); } });
+  else if (brief) { $("brief-input").value = brief.text; applyBrief(brief.parsed, brief.found); }
 });

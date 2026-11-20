@@ -1,4 +1,5 @@
 import math
+from itertools import combinations
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
@@ -41,11 +42,12 @@ def _run_monte_carlo(base_score, profit, conf, seed=42):
         "risk_adjusted_90d_profit_ngn": round(float(np.percentile(profits, 50)) * (1.0 - min(0.35, max(1.0, float(np.percentile(scores, 95) - np.percentile(scores, 5)))/100*0.85)), 0)
     }
 
-def evaluate_all_corridors(corridors_qs, demand_counts_by_area, dry_sku_cost_ngn=2400.0, hydration_ratio=3.0, beef_shock_pct=0.0, substitution_pct=0.50, pilot_budget_ngn=10_000_000.0, monthly_capacity_tons=12.0, min_margin_pct=22.0):
+def evaluate_all_corridors(corridors_qs, demand_counts_by_area, dry_sku_cost_ngn=2400.0, hydration_ratio=3.0, beef_shock_pct=0.0, substitution_pct=0.50, pilot_budget_ngn=10_000_000.0, monthly_capacity_tons=12.0, min_margin_pct=22.0, channel=None):
     evaluated = []
     dry_cogs = 1580.0
     margin_pct = max(0.0, ((dry_sku_cost_ngn - dry_cogs) / max(dry_sku_cost_ngn, 1.0)) * 100.0)
     for idx, c in enumerate(corridors_qs):
+        if channel and channel.lower() != 'all' and c.channel.lower() != channel.lower(): continue
         econ = compute_protein_and_carbon_metrics(c.local_beef_price_ngn, c.avg_menu_price_ngn, dry_sku_cost_ngn, hydration_ratio, beef_shock_pct, substitution_pct, c.base_weekly_demand_tons * 1000)
         live = demand_counts_by_area.get(c.lga.lower().strip(), 0)
         shap = {
@@ -57,7 +59,7 @@ def evaluate_all_corridors(corridors_qs, demand_counts_by_area, dry_sku_cost_ngn
             "Hub Prox": round(float(np.clip(((BASELINE["hub_distance"] - c.nearest_hub_km)/140)*FEATURE_WEIGHTS["hub_proximity"], -8, 9)), 1),
             "Live Demand": round(float(np.clip((math.log1p(live)/math.log1p(8))*FEATURE_WEIGHTS["live_demand_boost"] - 1.5, -2, 12)), 1)
         }
-        score = round(float(np.clip(52.0 + sum(shap.values()), 12.0, 98.5)), 1)
+        score = round(float(np.clip(42.0 + 0.5 * sum(shap.values()), 12.0, 96.0)), 1)
         tons = round(c.base_weekly_demand_tons * 4.33 * (1.0 + 0.03 * live), 2)
         profit = max(0.0, (tons*1000*dry_sku_cost_ngn) - (tons*1000*dry_cogs))
         mc = _run_monte_carlo(score, profit, c.data_confidence, seed=100+idx)
@@ -83,13 +85,15 @@ def evaluate_all_corridors(corridors_qs, demand_counts_by_area, dry_sku_cost_ngn
     for i, c in enumerate(evaluated): c["rank"] = i + 1
 
     eligible = [c for c in evaluated if c["wholesale_margin_pct"] >= min_margin_pct and c["cac_total_ngn"] <= pilot_budget_ngn and c["monthly_dry_tons"] <= monthly_capacity_tons]
-    best_combo, best_prof = [], -1.0
-    for i in range(len(eligible)):
-        if eligible[i]["risk_adjusted_90d_profit_ngn"] > best_prof: best_prof, best_combo = eligible[i]["risk_adjusted_90d_profit_ngn"], [eligible[i]]
-        for j in range(i+1, len(eligible)):
-            if eligible[i]["cac_total_ngn"]+eligible[j]["cac_total_ngn"] <= pilot_budget_ngn and eligible[i]["monthly_dry_tons"]+eligible[j]["monthly_dry_tons"] <= monthly_capacity_tons:
-                if eligible[i]["risk_adjusted_90d_profit_ngn"]+eligible[j]["risk_adjusted_90d_profit_ngn"] > best_prof:
-                    best_prof, best_combo = eligible[i]["risk_adjusted_90d_profit_ngn"]+eligible[j]["risk_adjusted_90d_profit_ngn"], [eligible[i], eligible[j]]
+        # Exact knapsack: try every subset (pool capped to the 14 best-scoring eligible corridors)
+    pool = eligible[:14]
+    best_combo, best_prof = [], 0.0
+    for size in range(1, len(pool) + 1):
+        for combo in combinations(pool, size):
+            if sum(c["cac_total_ngn"] for c in combo) > pilot_budget_ngn: continue
+            if sum(c["monthly_dry_tons"] for c in combo) > monthly_capacity_tons: continue
+            prof = sum(c["risk_adjusted_90d_profit_ngn"] for c in combo)
+            if prof > best_prof: best_prof, best_combo = prof, list(combo)
     
     return {
         "corridors": evaluated,
@@ -104,37 +108,125 @@ def evaluate_all_corridors(corridors_qs, demand_counts_by_area, dry_sku_cost_ngn
         }
     }
 
-def match_suppliers_and_recipe(suppliers_qs, city_or_lga, weekly_demand_kg, menu_type, has_cold_chain, customer_demographic, local_beef_price_ngn, hydration_ratio):
+HUB_DISTANCE_KM = {  # rough road distance from a hub city to a Lagos-area buyer
+    "ota": 40.0, "abeokuta": 80.0, "ibadan": 130.0, "ikeja": 25.0, "lagos": 20.0,
+    "kano": 1000.0, "kaduna": 800.0, "abuja": 700.0, "port harcourt": 600.0,
+}
+
+MENU_DISHES = {
+    "buka": [("Heart-Healthy Beef Stew", 0.50, "Locust beans, ginger, garlic", 6.5, "Umami rich, holds well in a pot"),
+             ("Ofada Stew Mince", 0.55, "Ata rodo, iru, palm oil", 6.0, "Absorbs sauce, no grit")],
+    "qsr": [("Beef-Blend Burger Patty", 0.40, "Paprika, onion powder, white pepper", 7.5, "Binds well, grills evenly"),
+            ("Meat Pie Filling", 0.60, "Thyme, curry, scotch bonnet", 8.0, "Moist after baking")],
+    "canteen": [("Jollof Rice Mince Topping", 0.60, "Thyme, curry, bay leaf", 7.0, "Disperses evenly in bulk cooking"),
+                ("Bulk Beef Stew", 0.50, "Locust beans, ginger, garlic", 6.5, "Reheats without drying")],
+    "suya": [("Suya Mince Wrap", 0.60, "Yaji spice, white pepper", 7.8, "High moisture retention"),
+             ("Shawarma Filling", 0.50, "Yaji, garlic, paprika", 7.2, "Crisps well on a griddle")],
+    "catering": [("Party Jollof Beef Topping", 0.60, "Thyme, curry, bay leaf", 7.0, "Stable for hours in warmers"),
+                 ("Egusi Mince", 0.50, "Egusi, crayfish, iru", 6.5, "Blends into the soup base")],
+}
+
+def _menu_key(menu_type):
+    m = (menu_type or "").lower()
+    for k in MENU_DISHES:
+        if k in m: return k
+    if "shawarma" in m: return "suya"
+    return "buka"
+
+def match_suppliers_and_recipe(suppliers_qs, city_or_lga, weekly_demand_kg, menu_type, has_cold_chain, customer_demographic,
+                               local_beef_price_ngn, hydration_ratio, substitution_pct=0.5, monthly_budget_ngn=None):
+    hydration_ratio = max(hydration_ratio, 1.0)
+    substitution_pct = min(max(substitution_pct, 0.05), 1.0)
     ranked = []
     for s in suppliers_qs:
-        dist = 120.0
-        if "lagos" in city_or_lga.lower() and s.city.lower() in ["ota", "abeokuta"]: dist = 40.0 if s.city.lower() == "ota" else 80.0
+        dist = HUB_DISTANCE_KM.get(s.city.lower(), 150.0)
+        if "lagos" not in city_or_lga.lower() and s.city.lower() in city_or_lga.lower(): dist = 15.0
         freight = (dist * s.transport_rate_ngn_per_ton_km) / 1000.0
-        landed = (s.wholesale_price_dry_ngn_kg + freight) / max(hydration_ratio, 1.0)
+        landed = (s.wholesale_price_dry_ngn_kg + freight) / hydration_ratio
+        dry_needed_kg = weekly_demand_kg * substitution_pct / hydration_ratio
+        monthly_dry_t = dry_needed_kg * 4.33 / 1000.0
+        capacity_ok = s.monthly_capacity_tons >= monthly_dry_t
+        score = 100 - dist / 12 - (0 if capacity_ok else 25) + (6 if s.nafdac_certified else -20) - s.lead_time_days
+        if not has_cold_chain and s.shelf_life_months < 6: score -= 10
         ranked.append({
-            "id": s.id, "name": s.name, "city": s.city, "state": s.state, "distance_km": dist,
-            "wholesale_dry_ngn_kg": s.wholesale_price_dry_ngn_kg, "freight_ngn_kg": freight, "landed_hydrated_ngn_kg": landed,
+            "id": s.id, "name": s.name, "city": s.city, "state": s.state, "specialty": s.specialty,
+            "distance_km": dist, "wholesale_dry_ngn_kg": s.wholesale_price_dry_ngn_kg, "freight_ngn_kg": round(freight, 1),
+            "landed_hydrated_ngn_kg": round(landed, 1),
             "savings_vs_beef_pct": round(((local_beef_price_ngn - landed) / local_beef_price_ngn) * 100, 1),
-            "monthly_capacity_tons": s.monthly_capacity_tons, "contact_phone": s.contact_phone,
-            "match_score": 100 - (dist/5)
+            "monthly_capacity_tons": s.monthly_capacity_tons, "monthly_need_tons": round(monthly_dry_t, 2),
+            "capacity_ok": capacity_ok, "nafdac": s.nafdac_certified, "lead_time_days": s.lead_time_days,
+            "shelf_life_months": s.shelf_life_months, "contact_phone": s.contact_phone,
+            "match_score": round(max(5.0, min(99.0, score)), 1),
         })
     ranked.sort(key=lambda x: x["match_score"], reverse=True)
+    if not ranked:
+        return {"ranked_hubs": [], "top_dishes": [], "recipe_card": None}
+
+    top = ranked[0]
+    per_kg_saved = local_beef_price_ngn - top["landed_hydrated_ngn_kg"]
+    key = _menu_key(menu_type)
+    older = str(customer_demographic).startswith("45")
+    dishes = []
+    for name, blend, spices, portions_per_kg, note in MENU_DISHES[key]:
+        dishes.append({
+            "dish_name": name, "blend_ratio": f"{int(blend*100)}/{100-int(blend*100)}", "spices": spices,
+            "naira_saved_per_100_portions": round(per_kg_saved * blend * (100 / portions_per_kg), 0) if per_kg_saved > 0 else 0,
+            "texture_note": note + (". Low-sodium version suits 45+ guests" if older else ""),
+        })
+    annual = weekly_demand_kg * substitution_pct * per_kg_saved * 52
     return {
         "ranked_hubs": ranked,
-        "top_dishes": [
-            {"dish_name": "Heart-Healthy Beef Stew", "blend_ratio": "50/50", "spices": "Locust beans, ginger, garlic", "naira_saved_per_100_portions": (local_beef_price_ngn - ranked[0]["landed_hydrated_ngn_kg"])*6.5, "texture_note": "Umami rich"},
-            {"dish_name": "Suya Mince Wrap", "blend_ratio": "60/40", "spices": "Yaji spice, white pepper", "naira_saved_per_100_portions": (local_beef_price_ngn - ranked[0]["landed_hydrated_ngn_kg"])*7.8, "texture_note": "High moisture retention"}
-        ],
+        "top_dishes": dishes,
         "recipe_card": {
-            "title": "B2B Chef Conversion Protocol", "selected_supplier": ranked[0]["name"],
-            "landed_hydrated_cost_ngn_kg": ranked[0]["landed_hydrated_ngn_kg"], "local_beef_cost_ngn_kg": local_beef_price_ngn,
-            "naira_saved_per_100_portions": (local_beef_price_ngn - ranked[0]["landed_hydrated_ngn_kg"])*6.5,
-            "annual_naira_saved": weekly_demand_kg * (local_beef_price_ngn - ranked[0]["landed_hydrated_ngn_kg"]) * 52,
-            "weekly_co2e_avoided_kg": weekly_demand_kg * (27.0 - 2.1) * 0.5,
-            "hydration_protocol": "1kg Dry + 2L Hot Water = 3kg Mince", "recommended_spices": "Locust beans, ginger, paprika",
-            "cold_chain_advantage": "Ambient storage approved" if not has_cold_chain else "Hybrid mode available"
-        }
+            "title": "Chef conversion card", "selected_supplier": top["name"], "supplier_city": top["city"],
+            "menu_type": menu_type, "blend_pct": int(substitution_pct * 100),
+            "landed_hydrated_cost_ngn_kg": top["landed_hydrated_ngn_kg"], "local_beef_cost_ngn_kg": local_beef_price_ngn,
+            "naira_saved_per_kg": round(per_kg_saved, 0),
+            "naira_saved_per_100_portions": dishes[0]["naira_saved_per_100_portions"],
+            "monthly_saved_ngn": round(annual / 12, 0),
+            "annual_naira_saved": round(annual, 0),
+            "weekly_co2e_avoided_kg": round(weekly_demand_kg * substitution_pct * (27.0 - 2.1), 1),
+            "hydration_protocol": f"1 kg dry + {hydration_ratio - 1:g} L hot water = {hydration_ratio:g} kg mince",
+            "recommended_spices": dishes[0]["spices"],
+            "cold_chain_advantage": "Ambient storage is fine: dry stock keeps %d months" % top["shelf_life_months"] if not has_cold_chain
+                                    else "Hydrate in batches and chill; dry stock stays ambient",
+        },
     }
+
+def match_customer_restaurants(restaurants_qs, city_or_lga, age, health_goal, max_budget_ngn, max_calories=None, limit=6):
+    area = (city_or_lga or "").split(",")[0].strip().lower()
+    goal = (health_goal or "").lower()
+    res = []
+    for r in restaurants_qs:
+        tags = [t.strip().lower() for t in r.health_tags.split(",") if t.strip()]
+        reasons, score = [], 20.0
+        if area and (area in r.lga.lower() or area in r.city.lower()):
+            score += 30.0; reasons.append("In your area")
+        elif area and r.state.lower() in ("lagos",) and "lagos" in area:
+            score += 15.0
+        if goal in tags:
+            score += 25.0; reasons.append("Built for " + goal.replace("_", " "))
+        if r.dish_price_ngn <= max_budget_ngn:
+            score += 15.0; reasons.append("Within budget")
+        else:
+            score -= min(25.0, (r.dish_price_ngn - max_budget_ngn) / max(max_budget_ngn, 1) * 60)
+        if max_calories and r.calories_per_serving <= max_calories:
+            score += 5.0; reasons.append("Under %d kcal" % max_calories)
+        elif max_calories:
+            score -= 8.0
+        if age >= 45 and r.cholesterol_reduction_pct >= 45: score += 5.0
+        score += (r.rating - 4.0) * 3
+        res.append({
+            "id": r.id, "name": r.name, "lga": r.lga, "city": r.city, "state": r.state,
+            "signature_dish": r.signature_dish, "dish_price_ngn": r.dish_price_ngn,
+            "health_tags": [t.strip() for t in r.health_tags.split(",") if t.strip()], "rating": r.rating,
+            "address": r.address, "calories": r.calories_per_serving, "blend_pct": r.proextend_blend_pct,
+            "cholesterol_reduction_pct": r.cholesterol_reduction_pct,
+            "within_budget": r.dish_price_ngn <= max_budget_ngn, "reasons": reasons,
+            "match_pct": int(max(5, min(99, score))),
+        })
+    res.sort(key=lambda x: x["match_pct"], reverse=True)
+    return res[:limit]
 
 def match_customer_restaurants(restaurants_qs, city_or_lga, age, health_goal, max_budget_ngn):
     res = []

@@ -1,68 +1,58 @@
-{% load static %}
-<!DOCTYPE html>
+{% load static %}<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>OptiProtein NG — {% block title %}App{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}OptiProtein{% endblock %} · OptiProtein NG</title>
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{% static 'css/style.css' %}">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 </head>
-<body>
-  <!-- Global Topbar -->
-  <header class="topbar">
-    <div class="container topbar-inner">
-      <div class="brand">
-        <div class="brand-badge">OP</div>
-        <div>
-          <h1>OptiProtein NG <span class="tag-pill">ProExtend-50™</span></h1>
-          <p class="subtitle">AI Market Opportunity & Two-Sided Value-Chain Engine</p>
-        </div>
-      </div>
-      <div class="header-stats">
-        <div class="stat-chip">
-          <span class="dot-live"></span>
-          <span>Live Signals: <strong id="header-signal-count">{{ total_signals }}</strong></span>
-        </div>
+<body data-page="{% block page_key %}{% endblock %}" data-required="{% block required %}{% endblock %}">
+  <a class="skip" href="#main">Skip to content</a>
+
+    <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">OP</span>
+      <div class="brand-text">
+        <div class="brand-name">OptiProtein NG</div>
+        <div class="brand-sub">ProExtend-50 market tool</div>
       </div>
     </div>
+
+    <nav class="switch" aria-label="Choose a mode">
+      <a href="{% url 'opportunities' %}" class="{% if request.resolver_match.url_name == 'opportunities' %}is-active{% endif %}" {% if request.resolver_match.url_name == 'opportunities' %}aria-current="page"{% endif %}>Plan a launch</a>
+      <a href="{% url 'restaurant' %}" class="{% if request.resolver_match.url_name == 'restaurant' %}is-active{% endif %}" {% if request.resolver_match.url_name == 'restaurant' %}aria-current="page"{% endif %}>Cut kitchen costs</a>
+      <a href="{% url 'customer' %}" class="{% if request.resolver_match.url_name == 'customer' %}is-active{% endif %}" {% if request.resolver_match.url_name == 'customer' %}aria-current="page"{% endif %}>Find a meal</a>
+    </nav>
+
+    <div class="signal-count"><strong id="header-signal-count">{{ total_signals }}</strong> demand signals logged</div>
   </header>
 
-  <!-- Clean Top Navigation Menu -->
-  <nav class="main-nav">
-    <div class="container nav-inner">
-      <a href="{% url 'opportunities' %}" class="nav-link {% if request.resolver_match.url_name == 'opportunities' %}active{% endif %}">
-        📈 1. Market Opportunity Dashboard
-      </a>
-      <a href="{% url 'restaurant' %}" class="nav-link {% if request.resolver_match.url_name == 'restaurant' %}active{% endif %}">
-        🍳 2. Restaurant ↔ Supplier Matcher
-      </a>
-      <a href="{% url 'customer' %}" class="nav-link {% if request.resolver_match.url_name == 'customer' %}active{% endif %}">
-        ❤️ 3. Customer Health Finder
-      </a>
-    </div>
-  </nav>
-
-  <!-- Global Voice Command Bar -->
-  <section class="command-section">
-    <div class="container">
-      <div class="command-card">
-        <div class="command-header">
-          <span class="command-title">🎤 Global AI Intent Router (Speak to navigate and auto-fill)</span>
-          <span id="parser-engine-badge" class="engine-badge">Ready</span>
+  <div class="stage">
+    <section class="brief" aria-label="Describe your situation">
+      <form id="brief-form" class="brief-form" autocomplete="off">
+        <label for="brief-input" class="brief-label">Describe your situation and we'll fill in the form for you</label>
+        <div class="brief-row">
+          <input id="brief-input" type="text" placeholder="I run a buka in Surulere, about 300 kg of beef a week, no fridge">
+          <button type="button" id="mic-btn" class="btn btn-quiet" aria-label="Speak instead" hidden>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 12a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v4a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0m5 5v3" /></svg>
+          </button>
+          <button type="submit" id="brief-submit" class="btn btn-primary">Fill the form</button>
         </div>
-        <div class="command-input-row">
-          <button id="mic-btn" type="button" class="btn-mic">🎤 Speak</button>
-          <input id="command-input" type="text" class="command-input" placeholder="e.g. 'I run a canteen in Surulere...' or 'I'm 56 in Ikeja with high blood pressure...'" />
-          <button id="command-submit-btn" type="button" class="btn-primary">Run Router →</button>
+        <div class="brief-examples" id="brief-examples">
+          <button type="button" data-example="I run a buka in Surulere, about 300 kg of beef a week, no fridge">Kitchen owner</button>
+          <button type="button" data-example="I'm 56 in Ikeja with high blood pressure, under ₦3,000 a meal">Diner</button>
+          <button type="button" data-example="Pilot with ₦15m budget, 20 tons a month, beef up 25%">Launch planner</button>
         </div>
-      </div>
-    </div>
-  </section>
+        <p id="brief-result" class="brief-result" role="status" aria-live="polite" hidden></p>
+      </form>
+    </section>
 
-  <!-- Page Specific Content -->
-  <main class="container main-content">
-    {% block content %}{% endblock %}
-  </main>
+    <main id="main" class="page">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
 
   <script src="{% static 'js/app.js' %}"></script>
 </body>

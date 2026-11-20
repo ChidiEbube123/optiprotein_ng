@@ -1,41 +1,83 @@
 {% extends 'base.html' %}
-{% block title %}Customer Health Finder{% endblock %}
+{% block title %}Find a meal{% endblock %}
+{% block page_key %}customer{% endblock %}
+{% block required %}corridor_or_city,age,health_goal,max_budget_ngn{% endblock %}
 {% block content %}
-<div class="page-header">
-  <h2>Diner Health Profile Matcher</h2>
-  <p class="muted-text">Find heart-smart, affordable meals nearby. Each search generates a live local demand signal.</p>
-</div>
+<header class="page-head">
+  <h1>Find a meal that fits your health and your budget</h1>
+  <p>Tell us where you are and what you need. We rank nearby partner restaurants and log your search as a demand signal.</p>
+</header>
 
-<div class="two-col-grid">
-  <div class="card">
-    <form id="customer-form" class="stacked-form">
-      <div class="form-row-2">
-        <div class="form-row">
-          <label>Your Area / City</label>
-          <input type="text" id="cust-city" value="Ikeja" required />
-        </div>
-        <div class="form-row">
-          <label>Age</label>
-          <input type="number" id="cust-age" value="56" required />
+<div class="split">
+  <form id="main-form" class="inputs" novalidate>
+    <fieldset>
+      <legend>About you</legend>
+      <div class="field">
+        <label for="f-city">Area or city</label>
+        <input id="f-city" data-key="corridor_or_city" list="places" placeholder="e.g. Ikeja" required>
+        <datalist id="places"><option>Surulere</option><option>Ikeja</option><option>Yaba</option><option>Alimosho</option><option>Lekki</option><option>Ibadan</option></datalist>
+      </div>
+      <div class="field">
+        <label for="f-age">Age</label>
+        <input id="f-age" data-key="age" data-type="int" type="number" inputmode="numeric" min="10" max="110" placeholder="e.g. 52" required>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>What you need</legend>
+      <div class="field" role="radiogroup" aria-labelledby="goal-label">
+        <span id="goal-label" class="label">Main health goal</span>
+        <div class="choice-grid">
+          <label class="choice"><input type="radio" name="health_goal" data-key="health_goal" value="hypertension"><span>Blood pressure</span></label>
+          <label class="choice"><input type="radio" name="health_goal" data-key="health_goal" value="cholesterol"><span>Cholesterol</span></label>
+          <label class="choice"><input type="radio" name="health_goal" data-key="health_goal" value="diabetes"><span>Blood sugar</span></label>
+          <label class="choice"><input type="radio" name="health_goal" data-key="health_goal" value="weight"><span>Weight</span></label>
+          <label class="choice"><input type="radio" name="health_goal" data-key="health_goal" value="budget"><span>Low cost</span></label>
         </div>
       </div>
-      <div class="form-row">
-        <label>Health Goal</label>
-        <select id="cust-goal">
-          <option value="hypertension">Blood Pressure / Hypertension</option>
-          <option value="cholesterol">Lower Cholesterol</option>
-          <option value="budget">Budget Protein</option>
-        </select>
+      <div class="field">
+        <label for="f-budget">Most you will pay per meal</label>
+        <div class="control"><span class="affix">₦</span><input id="f-budget" data-key="max_budget_ngn" data-type="float" type="number" inputmode="numeric" min="300" step="100" placeholder="3000" required></div>
       </div>
-      <button type="submit" class="btn-primary full-width">Find Restaurants & Log Signal</button>
-    </form>
-    <div class="signal-feed-box mt-3">
-      <strong>📡 Live Demand Signals Logged</strong>
-      <ul id="signal-feed-list" class="signal-list mt-2"></ul>
+      <div class="field">
+        <label for="f-cal">Calorie limit per meal <em>optional</em></label>
+        <div class="control"><input id="f-cal" data-key="max_calories" data-type="int" type="number" inputmode="numeric" min="100" max="3000" step="10" placeholder="No limit"><span class="affix">kcal</span></div>
+      </div>
+    </fieldset>
+
+    <label class="check">
+      <input type="checkbox" data-key="log_signal" checked>
+      <span>Count my search as a demand signal<small>Anonymous. Only area, age band, goal and budget are saved.</small></span>
+    </label>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Find restaurants</button>
+      <button type="button" class="btn btn-quiet" id="reset-btn">Clear</button>
     </div>
-  </div>
-  <div class="card" id="customer-restaurants-list">
-    <p class="muted-text">Matched restaurants will appear here...</p>
-  </div>
+  </form>
+
+      <div class="voice-card" id="voice-card" hidden>
+      <button type="button" id="voice-btn" class="btn btn-quiet" aria-pressed="false">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 12a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v4a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0m5 5v3" /></svg>
+        <span>Speak your needs</span>
+      </button>
+      <p>Say your area, age, health goal and budget. We'll fill the form.</p>
+    </div>
+
+  <section class="results" aria-live="polite">
+    <div id="results-empty" class="empty">
+      <h2>Your matches will show here</h2>
+      <p>Fill in the four required fields in the form. Or describe yourself in the box above and we'll do it for you.</p>
+    </div>
+    <div id="results-body" hidden>
+      <div class="results-head"><h2 id="results-title">Best matches</h2><p id="results-sub" class="muted"></p> <button type="button" id="speak-btn" class="btn btn-quiet" hidden>Read aloud</button></div>
+      
+      <ol id="match-list" class="match-list"></ol>
+      <div class="feed">
+        <h3>Latest searches</h3>
+        <ul id="signal-feed" class="feed-list"></ul>
+      </div>
+    </div>
+  </section>
 </div>
 {% endblock %}

@@ -1,42 +1,88 @@
 {% extends 'base.html' %}
-{% block title %}Restaurant Matcher{% endblock %}
+{% block title %}Cut kitchen costs{% endblock %}
+{% block page_key %}restaurant{% endblock %}
+{% block required %}corridor_or_city,menu_type,weekly_demand_kg{% endblock %}
 {% block content %}
-<div class="page-header">
-  <h2>Restaurant Kitchen to Verified Supplier Matcher</h2>
-  <p class="muted-text">Find NAFDAC-certified ProExtend-50 hubs & generate your B2B Chef Conversion Card.</p>
-</div>
+<header class="page-head">
+  <h1>Swap part of your beef for ProExtend-50 and see what you save</h1>
+  <p>Describe your kitchen. We find NAFDAC-registered hubs near you, price the swap against your beef cost, and write a conversion card you can hand to your cooks.</p>
+</header>
 
-<div class="two-col-grid">
-  <div class="card">
-    <form id="restaurant-form" class="stacked-form">
-      <div class="form-row">
-        <label>LGA / City</label>
-        <input type="text" id="rest-city" value="Surulere, Lagos" required />
+<div class="split">
+  <form id="main-form" class="inputs" novalidate>
+    <fieldset>
+      <legend>Your kitchen</legend>
+      <div class="field">
+        <label for="f-city">Area or city</label>
+        <input id="f-city" data-key="corridor_or_city" list="places" placeholder="e.g. Surulere, Lagos" required>
+        <datalist id="places"><option>Surulere, Lagos</option><option>Ikeja, Lagos</option><option>Yaba, Lagos</option><option>Alimosho, Lagos</option><option>Ota, Ogun</option><option>Ibadan, Oyo</option></datalist>
       </div>
-      <div class="form-row-2">
-        <div class="form-row">
-          <label>Weekly Demand (kg)</label>
-          <input type="number" id="rest-volume" value="200" required />
-        </div>
-        <div class="form-row">
-          <label>Cold-Chain Setup</label>
-          <select id="rest-cold-chain">
-            <option value="false">Ambient Only (No Fridge)</option>
-            <option value="true">Has Freezer</option>
-          </select>
-        </div>
+      <div class="field">
+        <label for="f-menu">Type of kitchen</label>
+        <select id="f-menu" data-key="menu_type" required>
+          <option value="">Choose one</option>
+          <option>Buka</option><option>QSR</option><option>Canteen</option><option>Suya / Shawarma</option><option>Catering</option>
+        </select>
       </div>
-      <button type="submit" class="btn-primary full-width">Match Supplier & Get Recipe</button>
-    </form>
-    <div id="dish-recommendations" style="margin-top:16px;"></div>
-  </div>
+      <div class="field">
+        <label for="f-kg">Meat used per week</label>
+        <div class="control"><input id="f-kg" data-key="weekly_demand_kg" data-type="float" type="number" inputmode="decimal" min="1" placeholder="200" required><span class="affix">kg</span></div>
+      </div>
+      <div class="field">
+        <label for="f-cold">Storage</label>
+        <select id="f-cold" data-key="has_cold_chain" data-type="bool">
+          <option value="false">Ambient only, no freezer</option>
+          <option value="true">I have a freezer</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-age">Most of your guests are</label>
+        <select id="f-age" data-key="customer_demographic">
+          <option value="45+">45 and older</option>
+          <option value="Under 45">Under 45</option>
+        </select>
+      </div>
+    </fieldset>
 
-  <div class="right-stack">
-    <div class="card recipe-card" id="recipe-body">
-      <h3 style="margin-bottom:10px;">B2B Chef Conversion Protocol</h3>
-      <p class="muted-text">Submit form to generate conversion card...</p>
+    <fieldset>
+      <legend>The swap</legend>
+      <div class="field">
+        <label for="f-beef">What you pay for beef <em>optional</em></label>
+        <div class="control"><span class="affix">₦</span><input id="f-beef" data-key="beef_price_ngn" data-type="float" type="number" inputmode="numeric" min="1000" step="50" placeholder="Market price in your area"><span class="affix">/kg</span></div>
+        <p class="hint">Leave blank and we use the local market price.</p>
+      </div>
+      <div class="field">
+        <label for="f-blend">Share of beef to replace <output id="o-blend" for="f-blend">50%</output></label>
+        <input id="f-blend" data-key="substitution_pct" data-type="float" type="range" min="10" max="80" step="5" value="50">
+      </div>
+      <div class="field">
+        <label for="f-hyd">Water added to dry mince</label>
+        <select id="f-hyd" data-key="hydration_ratio" data-type="float">
+          <option value="2.5">1 : 1.5 (firm)</option>
+          <option value="3" selected>1 : 2 (standard)</option>
+          <option value="3.5">1 : 2.5 (soft)</option>
+        </select>
+      </div>
+    </fieldset>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Match supplier and build card</button>
+      <button type="button" class="btn btn-quiet" id="reset-btn">Clear</button>
     </div>
-    <div class="card" id="supplier-hubs-list"></div>
-  </div>
+  </form>
+
+  <section class="results" aria-live="polite">
+    <div id="results-empty" class="empty">
+      <h2>Your conversion card will show here</h2>
+      <p>Fill in the three required fields in the form, or describe your kitchen in the box above.</p>
+    </div>
+    <div id="results-body" hidden>
+      <article class="card-sheet" id="recipe-card"></article>
+      <h2 class="section-title">Supplier hubs near you</h2>
+      <div id="hub-list" class="hub-list"></div>
+      <h2 class="section-title">Dishes to start with</h2>
+      <div id="dish-list" class="dish-list"></div>
+    </div>
+  </section>
 </div>
 {% endblock %}

@@ -1,60 +1,85 @@
 {% extends 'base.html' %}
-{% block title %}Market Opportunity{% endblock %}
+{% block title %}Plan a launch{% endblock %}
+{% block page_key %}opportunity{% endblock %}
+{% block required %}{% endblock %}
 {% block content %}
-<div class="page-header">
-  <h2>Corridor Launch Optimizer</h2>
-  <p class="muted-text">Analyze top Nigerian LGA corridors using Monte Carlo simulations & SHAP attribution.</p>
-</div>
+<header class="page-head">
+  <h1>Choose which corridors to pilot first</h1>
+  <p>We score each Nigerian corridor, simulate the uncertainty, then pick the mix of pilots that earns the most within your budget and capacity.</p>
+</header>
 
-<div class="card controls-card">
-  <div class="controls-grid">
-    <div class="control-group">
-      <label>Dry SKU (₦/kg)</label>
-      <input type="number" id="ctrl-sku-cost" value="2400" />
-    </div>
-    <div class="control-group">
-      <label>Pilot Budget (₦)</label>
-      <input type="number" id="ctrl-budget" value="10000000" />
-    </div>
-    <div class="control-group">
-      <label>Capacity (Tons/Mo)</label>
-      <input type="number" id="ctrl-capacity" value="12" />
-    </div>
-    <div class="control-group control-action">
-      <button type="button" id="recalc-opp-btn" class="btn-primary full-width">Compute & Optimize</button>
-    </div>
-  </div>
-</div>
+<div class="split split-wide">
+  <form id="main-form" class="inputs" novalidate>
+    <fieldset>
+      <legend>Your product</legend>
+      <div class="field">
+        <label for="f-sku">Wholesale price of dry ProExtend-50</label>
+        <div class="control"><span class="affix">₦</span><input id="f-sku" data-key="sku_cost_ngn" data-type="float" type="number" min="500" step="10" value="2400"><span class="affix">/kg</span></div>
+      </div>
+      <div class="field">
+        <label for="f-hyd">Water added to dry mince</label>
+        <select id="f-hyd" data-key="hydration_ratio" data-type="float">
+          <option value="2.5">1 : 1.5 (firm)</option><option value="3" selected>1 : 2 (standard)</option><option value="3.5">1 : 2.5 (soft)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-sub">Beef replaced in a dish <output id="o-sub" for="f-sub">50%</output></label>
+        <input id="f-sub" data-key="substitution_pct" data-type="float" type="range" min="10" max="80" step="5" value="50">
+      </div>
+    </fieldset>
 
-<div class="kpi-grid">
-  <div class="card kpi-card">
-    <span class="kpi-label">Optimal 90-Day Profit</span>
-    <div class="kpi-value text-emerald" id="kpi-knapsack-profit">—</div>
-  </div>
-</div>
+    <fieldset>
+      <legend>Market conditions</legend>
+      <div class="field">
+        <label for="f-shock">Change in beef price <output id="o-shock" for="f-shock">0%</output></label>
+        <input id="f-shock" data-key="beef_price_shock_pct" data-type="float" type="range" min="-20" max="60" step="5" value="0">
+        <p class="hint">Slide right to test a beef price rise.</p>
+      </div>
+      <div class="field">
+        <label for="f-channel">Channel</label>
+        <select id="f-channel" data-key="channel"><option value="all">All channels</option></select>
+      </div>
+    </fieldset>
 
-<div class="two-col-grid">
-  <div class="card">
-    <h3>SHAP Feature Attribution</h3>
-    <div class="chart-wrapper"><canvas id="shapChart"></canvas></div>
-  </div>
-  <div class="card knapsack-card">
-    <h3>Selected Launch Portfolio (Knapsack)</h3>
-    <div id="knapsack-list" class="knapsack-items"></div>
-  </div>
-</div>
+    <fieldset>
+      <legend>Pilot limits</legend>
+      <div class="field">
+        <label for="f-budget">Budget for winning new outlets</label>
+        <div class="control"><span class="affix">₦</span><input id="f-budget" data-key="pilot_budget_ngn" data-type="float" type="number" min="0" step="500000" value="10000000"></div>
+      </div>
+      <div class="field">
+        <label for="f-cap">Supply you can deliver each month</label>
+        <div class="control"><input id="f-cap" data-key="monthly_capacity_tons" data-type="float" type="number" min="0" step="1" value="12"><span class="affix">tons</span></div>
+      </div>
+      <div class="field">
+        <label for="f-margin">Lowest margin you will accept</label>
+        <div class="control"><input id="f-margin" data-key="min_margin_pct" data-type="float" type="number" min="0" max="95" step="1" value="22"><span class="affix">%</span></div>
+      </div>
+    </fieldset>
 
-<div class="card table-card">
-  <h3>Ranked Corridors (Monte Carlo 90% CI)</h3>
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Rank & Location</th>
-        <th>Cluster</th>
-        <th>Score (90% CI)</th>
-      </tr>
-    </thead>
-    <tbody id="corridors-tbody"></tbody>
-  </table>
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Update plan</button>
+      <button type="button" class="btn btn-quiet" id="reset-btn">Reset</button>
+    </div>
+  </form>
+
+  <section class="results" aria-live="polite">
+    <div id="results-body">
+      <div id="plan-summary" class="plan-summary"></div>
+      <h2 class="section-title">Recommended pilots</h2>
+      <div id="portfolio" class="portfolio"></div>
+
+      <h2 class="section-title">All corridors, ranked</h2>
+      <p class="muted">Select a row to see what drives its score.</p>
+      <div class="table-wrap">
+        <table class="grid" id="corridor-table">
+          <thead><tr><th>Corridor</th><th>Score and 90% range</th><th class="num">Beef saved per kg</th><th class="num">Tons per month</th><th class="num">Launch cost</th><th>Data</th></tr></thead>
+          <tbody id="corridor-body"></tbody>
+        </table>
+      </div>
+
+      <div id="why" class="why"></div>
+    </div>
+  </section>
 </div>
 {% endblock %}
