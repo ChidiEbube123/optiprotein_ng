@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block title %}Market Opportunity{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>Corridor Launch Optimizer</h2>
+  <p class="muted-text">Analyze top Nigerian LGA corridors using Monte Carlo simulations & SHAP attribution.</p>
+</div>
+
+<div class="card controls-card">
+  <div class="controls-grid">
+    <div class="control-group">
+      <label>Dry SKU (₦/kg)</label>
+      <input type="number" id="ctrl-sku-cost" value="2400" />
+    </div>
+    <div class="control-group">
+      <label>Pilot Budget (₦)</label>
+      <input type="number" id="ctrl-budget" value="10000000" />
+    </div>
+    <div class="control-group">
+      <label>Capacity (Tons/Mo)</label>
+      <input type="number" id="ctrl-capacity" value="12" />
+    </div>
+    <div class="control-group control-action">
+      <button type="button" id="recalc-opp-btn" class="btn-primary full-width">Compute & Optimize</button>
+    </div>
+  </div>
+</div>
+
+<div class="kpi-grid">
+  <div class="card kpi-card">
+    <span class="kpi-label">Optimal 90-Day Profit</span>
+    <div class="kpi-value text-emerald" id="kpi-knapsack-profit">—</div>
+  </div>
+</div>
+
+<div class="two-col-grid">
+  <div class="card">
+    <h3>SHAP Feature Attribution</h3>
+    <div class="chart-wrapper"><canvas id="shapChart"></canvas></div>
+  </div>
+  <div class="card knapsack-card">
+    <h3>Selected Launch Portfolio (Knapsack)</h3>
+    <div id="knapsack-list" class="knapsack-items"></div>
+  </div>
+</div>
+
+<div class="card table-card">
+  <h3>Ranked Corridors (Monte Carlo 90% CI)</h3>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Rank & Location</th>
+        <th>Cluster</th>
+        <th>Score (90% CI)</th>
+      </tr>
+    </thead>
+    <tbody id="corridors-tbody"></tbody>
+  </table>
+</div>
+{% endblock %}

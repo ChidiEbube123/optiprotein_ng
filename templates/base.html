@@ -1,0 +1,69 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>OptiProtein NG — {% block title %}App{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'css/style.css' %}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <!-- Global Topbar -->
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <div class="brand">
+        <div class="brand-badge">OP</div>
+        <div>
+          <h1>OptiProtein NG <span class="tag-pill">ProExtend-50™</span></h1>
+          <p class="subtitle">AI Market Opportunity & Two-Sided Value-Chain Engine</p>
+        </div>
+      </div>
+      <div class="header-stats">
+        <div class="stat-chip">
+          <span class="dot-live"></span>
+          <span>Live Signals: <strong id="header-signal-count">{{ total_signals }}</strong></span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Clean Top Navigation Menu -->
+  <nav class="main-nav">
+    <div class="container nav-inner">
+      <a href="{% url 'opportunities' %}" class="nav-link {% if request.resolver_match.url_name == 'opportunities' %}active{% endif %}">
+        📈 1. Market Opportunity Dashboard
+      </a>
+      <a href="{% url 'restaurant' %}" class="nav-link {% if request.resolver_match.url_name == 'restaurant' %}active{% endif %}">
+        🍳 2. Restaurant ↔ Supplier Matcher
+      </a>
+      <a href="{% url 'customer' %}" class="nav-link {% if request.resolver_match.url_name == 'customer' %}active{% endif %}">
+        ❤️ 3. Customer Health Finder
+      </a>
+    </div>
+  </nav>
+
+  <!-- Global Voice Command Bar -->
+  <section class="command-section">
+    <div class="container">
+      <div class="command-card">
+        <div class="command-header">
+          <span class="command-title">🎤 Global AI Intent Router (Speak to navigate and auto-fill)</span>
+          <span id="parser-engine-badge" class="engine-badge">Ready</span>
+        </div>
+        <div class="command-input-row">
+          <button id="mic-btn" type="button" class="btn-mic">🎤 Speak</button>
+          <input id="command-input" type="text" class="command-input" placeholder="e.g. 'I run a canteen in Surulere...' or 'I'm 56 in Ikeja with high blood pressure...'" />
+          <button id="command-submit-btn" type="button" class="btn-primary">Run Router →</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Page Specific Content -->
+  <main class="container main-content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="{% static 'js/app.js' %}"></script>
+</body>
+</html>

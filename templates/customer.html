@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block title %}Customer Health Finder{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>Diner Health Profile Matcher</h2>
+  <p class="muted-text">Find heart-smart, affordable meals nearby. Each search generates a live local demand signal.</p>
+</div>
+
+<div class="two-col-grid">
+  <div class="card">
+    <form id="customer-form" class="stacked-form">
+      <div class="form-row-2">
+        <div class="form-row">
+          <label>Your Area / City</label>
+          <input type="text" id="cust-city" value="Ikeja" required />
+        </div>
+        <div class="form-row">
+          <label>Age</label>
+          <input type="number" id="cust-age" value="56" required />
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Health Goal</label>
+        <select id="cust-goal">
+          <option value="hypertension">Blood Pressure / Hypertension</option>
+          <option value="cholesterol">Lower Cholesterol</option>
+          <option value="budget">Budget Protein</option>
+        </select>
+      </div>
+      <button type="submit" class="btn-primary full-width">Find Restaurants & Log Signal</button>
+    </form>
+    <div class="signal-feed-box mt-3">
+      <strong>📡 Live Demand Signals Logged</strong>
+      <ul id="signal-feed-list" class="signal-list mt-2"></ul>
+    </div>
+  </div>
+  <div class="card" id="customer-restaurants-list">
+    <p class="muted-text">Matched restaurants will appear here...</p>
+  </div>
+</div>
+{% endblock %}
