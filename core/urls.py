@@ -12,4 +12,6 @@ urlpatterns = [
     path('api/match-supplier/', views.api_match_supplier, name='api_match_supplier'),
     path('api/match-customer/', views.api_match_customer, name='api_match_customer'),
     path('api/parse-intent/', views.api_parse_intent, name='api_parse_intent'),
+
+    path('api/ai-fill/', views.api_ai_fill, name='api_ai_fill'),
 ]

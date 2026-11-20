@@ -35,7 +35,7 @@
         <label for="brief-input" class="brief-label">Describe your situation and we'll fill in the form for you</label>
         <div class="brief-row">
           <input id="brief-input" type="text" placeholder="I run a buka in Surulere, about 300 kg of beef a week, no fridge">
-          <button type="button" id="mic-btn" class="btn btn-quiet" aria-label="Speak instead" hidden>
+          <button type="button" id="mic-btn" class="btn btn-quiet" aria-label="Speak instead">
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 12a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v4a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0m5 5v3" /></svg>
           </button>
           <button type="submit" id="brief-submit" class="btn btn-primary">Fill the form</button>
@@ -53,7 +53,36 @@
       {% block content %}{% endblock %}
     </main>
   </div>
+    <div class="voice" id="voice" role="dialog" aria-modal="true" aria-labelledby="v-title" hidden>
+    <div class="voice-sheet">
+      <header class="voice-head">
+        <h2 id="v-title">Tell us in your own words</h2>
+        <button type="button" id="v-close" class="voice-x" aria-label="Close">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg>
+        </button>
+      </header>
+      <p class="voice-sub" id="v-hint"></p>
 
+      <div class="voice-meter" data-state="idle" id="v-meter">
+        <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <span id="v-status" class="voice-status">Ready</span>
+        <time id="v-time" class="voice-time">0:00</time>
+      </div>
+
+      <label for="v-text" class="sr-only">What you said</label>
+      <textarea id="v-text" rows="7" placeholder="Your words appear here as you speak. You can edit them before we fill the form."></textarea>
+      <p id="v-interim" class="voice-interim" aria-hidden="true"></p>
+      <p id="v-error" class="voice-error" role="alert" hidden></p>
+
+      <footer class="voice-foot">
+        <button type="button" id="v-toggle" class="btn btn-quiet">Pause</button>
+        <button type="button" id="v-clear" class="btn btn-quiet">Clear</button>
+        <span class="spacer"></span>
+        <button type="button" id="v-cancel" class="btn btn-quiet">Cancel</button>
+        <button type="button" id="v-fill" class="btn btn-primary">Fill the form</button>
+      </footer>
+    </div>
+  </div>
   <script src="{% static 'js/app.js' %}"></script>
 </body>
 </html>

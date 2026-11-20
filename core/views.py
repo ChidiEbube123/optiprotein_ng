@@ -1,5 +1,8 @@
 import json
+import os
 import re
+import urllib.error
+import urllib.request
 from django.db.models import Count
 from django.http import JsonResponse
 from django.shortcuts import render
@@ -134,12 +137,9 @@ def _money(t):
     if m: return float(m.group(1).replace(',', '')) * (1000 if m.group(2) == 'k' else 1), 'n'
     return None, None
 
-@require_http_methods(["POST"])
-@csrf_exempt
-def api_parse_intent(request):
-    """Rule-based parser for Nigerian-English prompts. Returns parsed values and which fields were actually heard."""
-    raw = _text(_body(request), 'prompt', '')
-    t = raw.lower()
+def _rule_parse(raw):
+    """Rule-based parser for Nigerian-English prompts. Returns (parsed, found)."""
+    t = (raw or '').lower()
     parsed, found = {}, []
 
     def put(k, v):
@@ -191,4 +191,129 @@ def api_parse_intent(request):
     m = re.search(r'(?:under|below|less than|max)\s*(\d{3,4})\s*(?:kcal|cal)', t)
     if m: put("max_calories", int(m.group(1)))
 
-    return JsonResponse({"parsed": parsed, "found": found, "engine": "Rule-based router"})
+    return parsed, found
+@require_http_methods(["POST"])
+@csrf_exempt
+def api_parse_intent(request):
+    parsed, found = _rule_parse(_text(_body(request), 'prompt', ''))
+    return JsonResponse({"parsed": parsed, "found": found, "engine": "rules"})
+
+
+
+# ---------- AI form filling (used by the voice sheet) ----------
+# Set these in your environment, never in front-end code:
+#   AI_PROVIDER=anthropic (default) or openai       AI_API_KEY=...   (ANTHROPIC_API_KEY / OPENAI_API_KEY also work)
+#   AI_MODEL=...   AI_BASE_URL=... (optional; any OpenAI-compatible server works with AI_PROVIDER=openai)
+def _f(kind, desc, lo=None, hi=None, options=None):
+    return {"kind": kind, "desc": desc, "lo": lo, "hi": hi, "options": options}
+
+MENU_OPTIONS = ["Buka", "QSR", "Canteen", "Suya / Shawarma", "Catering"]
+AI_SPECS = {
+    "customer": {
+        "corridor_or_city": _f("text", "Area, LGA or city where they want to eat, e.g. Ikeja"),
+        "age": _f("int", "Age in years", 10, 110),
+        "health_goal": _f("enum", "Main health goal", options=["hypertension", "cholesterol", "diabetes", "weight", "budget"]),
+        "max_budget_ngn": _f("num", "Most they will pay for ONE meal, in naira", 300, 50000),
+        "max_calories": _f("int", "Calorie limit per meal in kcal", 100, 3000),
+    },
+    "restaurant": {
+        "corridor_or_city": _f("text", "Area or city of the kitchen, e.g. Surulere, Lagos"),
+        "menu_type": _f("enum", "Type of kitchen", options=MENU_OPTIONS),
+        "weekly_demand_kg": _f("num", "Kilograms of beef or meat used per WEEK", 1, 100000),
+        "has_cold_chain": _f("bool", "true if they have a freezer or fridge, false if ambient storage only"),
+        "customer_demographic": _f("enum", "Age of most guests", options=["45+", "Under 45"]),
+        "beef_price_ngn": _f("num", "What they pay for beef, naira per kg", 1000, 30000),
+        "substitution_pct": _f("num", "Percent of beef they want to replace", 10, 80),
+        "hydration_ratio": _f("enum", "Total weight of mince made per 1 kg dry: 2.5 firm, 3 standard, 3.5 soft", options=[2.5, 3.0, 3.5]),
+    },
+    "opportunity": {
+        "sku_cost_ngn": _f("num", "Wholesale price of dry ProExtend-50, naira per kg", 500, 20000),
+        "hydration_ratio": _f("enum", "Total weight of mince made per 1 kg dry: 2.5 firm, 3 standard, 3.5 soft", options=[2.5, 3.0, 3.5]),
+        "substitution_pct": _f("num", "Percent of beef replaced in a dish", 10, 80),
+        "beef_price_shock_pct": _f("num", "Beef price change in percent, negative if it falls", -20, 60),
+        "channel": _f("enum", "Channel to focus on", options=["all"] + MENU_OPTIONS),
+        "pilot_budget_ngn": _f("num", "Budget for winning new outlets, naira", 0, 10_000_000_000),
+        "monthly_capacity_tons": _f("num", "Tons of dry product they can supply per month", 0, 100000),
+        "min_margin_pct": _f("num", "Lowest margin they will accept, percent", 0, 95),
+    },
+}
+
+def _ai_prompt(page):
+    lines = []
+    for k, f in AI_SPECS[page].items():
+        extra = f" One of: {f['options']}." if f["options"] else (f" Range {f['lo']} to {f['hi']}." if f["lo"] is not None else "")
+        lines.append(f'- "{k}" ({f["kind"]}): {f["desc"]}.{extra}')
+    return (
+        "You fill in a web form for a Nigerian food-tech tool. The user spoke freely, possibly for a long time, in Nigerian English or pidgin, "
+        "and the transcript may contain speech-recognition mistakes, filler, corrections and numbers spelled out. "
+        "If they correct themselves, use the final value. Extract ONLY what they stated or clearly implied. Never guess or invent.\n\n"
+        "Return ONE JSON object, nothing else, with exactly these keys. Use null for anything not mentioned:\n" + "\n".join(lines) + "\n\n"
+        "Conversions: money is in naira (3k = 3000, 2.5m = 2500000, N3,500 = 3500). 'kilos' = kg. 'half' = 50 percent. "
+        "Spelled-out numbers become digits (fifty six = 56)."
+    )
+
+import boto3
+
+bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
+
+def _call_llm(system, user):
+    model_id = os.environ.get("AI_MODEL", "amazon.nova-lite-v1:0")
+    response = bedrock.converse(
+        modelId=model_id,
+        system=[{"text": system}],
+        messages=[{"role": "user", "content": [{"text": user}]}],
+        inferenceConfig={"maxTokens": 700, "temperature": 0.0},
+    )
+    text = response["output"]["message"]["content"][0]["text"]
+    a, b = text.find("{"), text.rfind("}")
+    if a < 0 or b < a:
+        raise ValueError("model returned no JSON")
+    return json.loads(text[a:b + 1])
+
+def _clean_ai(page, raw):
+    """Validate whatever the model returned against the form's real limits."""
+    parsed = {}
+    for k, f in AI_SPECS[page].items():
+        v = raw.get(k)
+        if v is None or v == "": continue
+        try:
+            if f["kind"] == "text":
+                v = str(v).strip()[:80]
+                if not v: continue
+            elif f["kind"] in ("int", "num"):
+                v = float(str(v).replace(",", ""))
+                v = max(f["lo"], min(f["hi"], v))
+                v = int(round(v)) if f["kind"] == "int" else v
+                if k == "substitution_pct": v = int(round(v / 5) * 5)
+            elif f["kind"] == "bool":
+                v = v if isinstance(v, bool) else str(v).lower() in ("true", "yes", "1")
+            elif f["kind"] == "enum":
+                if isinstance(f["options"][0], float):
+                    v = min(f["options"], key=lambda o: abs(o - float(v)))
+                else:
+                    low = str(v).lower().strip()
+                    hit = next((o for o in f["options"] if o.lower() == low), None) or \
+                          next((o for o in f["options"] if low in o.lower() or o.lower().split(" ")[0] in low), None)
+                    if hit is None: continue
+                    v = hit
+        except (TypeError, ValueError):
+            continue
+        parsed[k] = v
+    return parsed
+
+@require_http_methods(["POST"])
+@csrf_exempt
+def api_ai_fill(request):
+    d = _body(request)
+    page = d.get("page") if d.get("page") in AI_SPECS else "customer"
+    transcript = _text(d, "transcript", "")[:6000]
+    if not transcript:
+        return JsonResponse({"parsed": {}, "found": [], "engine": "none", "note": "Nothing to read."})
+    try:
+        parsed = _clean_ai(page, _call_llm(_ai_prompt(page), transcript))
+        return JsonResponse({"parsed": parsed, "found": list(parsed), "engine": "ai"})
+    except Exception as exc:  # no key, network, bad JSON: fall back so the user still gets something
+        rules, _ = _rule_parse(transcript)
+        parsed = {k: v for k, v in rules.items() if k in AI_SPECS[page]}
+        return JsonResponse({"parsed": parsed, "found": list(parsed), "engine": "rules",
+                             "note": "AI is unavailable right now, so we used basic matching. Check the form."})

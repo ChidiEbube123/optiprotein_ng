@@ -99,7 +99,7 @@ form?.addEventListener("input", e => { const f = e.target.closest?.(".field"); i
 /* ---------- Brief (intent router) ---------- */
 const FIELD_LABELS = { corridor_or_city: "area", age: "age", health_goal: "health goal", max_budget_ngn: "budget per meal", menu_type: "kitchen type",
   weekly_demand_kg: "weekly volume", has_cold_chain: "storage", pilot_budget_ngn: "pilot budget", monthly_capacity_tons: "monthly supply",
-  beef_price_shock_pct: "beef price change", substitution_pct: "beef replaced", max_calories: "calorie limit" };
+  beef_price_shock_pct: "beef price change", substitution_pct: "beef replaced", max_calories: "calorie limit" ,max_calories: "calorie limit", customer_demographic: "guest age", beef_price_ngn: "beef price", sku_cost_ngn: "dry product price", hydration_ratio: "water ratio", min_margin_pct: "minimum margin", channel: "channel" };
 const ROUTES = { restaurant: "/restaurant/", customer: "/customer/", strategist: "/" };
 const PAGE_ROLE = { restaurant: "restaurant", customer: "customer", opportunity: "strategist" };
 
@@ -146,23 +146,104 @@ async function runBrief(text) {
 }
 $("brief-form").addEventListener("submit", e => { e.preventDefault(); runBrief($("brief-input").value); });
 document.querySelectorAll("[data-example]").forEach(b => b.addEventListener("click", () => { $("brief-input").value = b.dataset.example; runBrief(b.dataset.example); }));
-
-/* voice input where the browser supports it */
+/* ---------- Voice sheet: long-form dictation, then an AI model fills the form ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-function listen(btn, onText, onFail) {
-  if (btn.classList.contains("listening")) return;
-  const rec = new SR(); rec.lang = "en-NG"; rec.interimResults = false;
-  btn.classList.add("listening"); btn.setAttribute("aria-pressed", "true");
-  const done = () => { btn.classList.remove("listening"); btn.setAttribute("aria-pressed", "false"); };
-  rec.onresult = e => onText(e.results[0][0].transcript);
-  rec.onerror = e => { done(); if (onFail) onFail(e.error); };
-  rec.onend = done;
-  rec.start();
+const VOICE_HINTS = {
+  customer: "Say where you are, your age, what you're managing (blood pressure, sugar, cholesterol, weight) and the most you'll pay for a meal.",
+  restaurant: "Describe your kitchen: the area, what kind of place it is, how much beef you use a week, your storage, and what you pay for beef.",
+  opportunity: "Tell us your launch budget, how much you can supply each month, what you expect beef prices to do, and which channel you care about.",
+};
+const V = { rec: null, state: "idle", opener: null, secs: 0, tick: null };
+const vEl = id => document.getElementById(id);
+
+function vSetState(state, label) {
+  V.state = state;
+  vEl("v-meter").dataset.state = state;
+  vEl("v-status").textContent = label || ({ listening: "Listening", paused: "Paused", busy: "Reading what you said", idle: SR ? "Ready" : "Type or paste" }[state]);
+  vEl("v-toggle").textContent = state === "listening" ? "Pause" : "Resume";
+  vEl("v-toggle").hidden = !SR;
+  clearInterval(V.tick);
+  if (state === "listening") V.tick = setInterval(() => { V.secs++; vEl("v-time").textContent = Math.floor(V.secs / 60) + ":" + String(V.secs % 60).padStart(2, "0"); }, 1000);
 }
-if (SR) {
-  const mic = $("mic-btn"); mic.hidden = false;
-  mic.addEventListener("click", () => listen(mic, t => { $("brief-input").value = t; runBrief(t); }));
+function vError(msg) { const e = vEl("v-error"); e.hidden = !msg; e.textContent = msg || ""; }
+
+function vStart() {
+  if (!SR) return;
+  vError("");
+  const rec = new SR(); V.rec = rec;
+  rec.lang = "en-NG"; rec.continuous = true; rec.interimResults = true;
+  rec.onresult = e => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) vEl("v-text").value = (vEl("v-text").value.trim() + " " + t.trim()).trim() + " ";
+      else interim += t;
+    }
+    vEl("v-interim").textContent = interim;
+    vEl("v-text").scrollTop = vEl("v-text").scrollHeight;
+  };
+  rec.onerror = e => {
+    if (e.error === "no-speech" || e.error === "aborted") return;
+    V.state = "paused";
+    vError(e.error === "not-allowed" || e.error === "service-not-allowed"
+      ? "Microphone is blocked. Allow it in your browser's address bar, or type below instead."
+      : e.error === "network" ? "Speech service unreachable. Check your connection, or type below instead."
+      : "Voice stopped unexpectedly. Tap Resume or type below.");
+    vSetState("paused");
+  };
+  rec.onend = () => { if (V.state === "listening" && V.rec === rec) { try { vStart(); } catch (err) { vSetState("paused"); } } };  // browsers end after silence; keep going
+  try { rec.start(); vSetState("listening"); } catch (err) { vSetState("paused"); }
 }
+function vStop() { const r = V.rec; V.rec = null; if (r) { try { r.stop(); } catch (e) {} } vEl("v-interim").textContent = ""; }
+
+function openVoice(opener) {
+  V.opener = opener || null; V.secs = 0; vEl("v-time").textContent = "0:00";
+  vEl("v-text").value = ""; vEl("v-interim").textContent = ""; vError("");
+  vEl("v-hint").textContent = VOICE_HINTS[PAGE] || VOICE_HINTS.customer;
+  vEl("voice").hidden = false; document.body.classList.add("voice-open");
+  if (SR) { vSetState("listening"); vStart(); }
+  else { vSetState("idle"); vError("Voice isn't supported in this browser, so type or paste what you want to say."); vEl("v-text").focus(); }
+}
+function closeVoice() {
+  vStop(); vSetState("idle");
+  vEl("voice").hidden = true; document.body.classList.remove("voice-open");
+  V.opener?.focus();
+}
+async function fillFromVoice() {
+  const text = (vEl("v-text").value + " " + vEl("v-interim").textContent).trim();
+  if (text.length < 3) { vError("Say or type something first."); return; }
+  vStop(); vError(""); vSetState("busy");
+  vEl("v-fill").disabled = true;
+  try {
+    const d = await post("/api/ai-fill/", { transcript: text, page: PAGE });
+    if (!d.found.length) { vSetState("paused", "Nothing to fill yet"); vError("We couldn't find anything for this form in that. Add more detail, then try again."); return; }
+    closeVoice();
+    $("brief-input").value = text.length > 140 ? text.slice(0, 137) + "…" : text;
+    applyBrief(d.parsed, d.found);
+    if (d.note) $("brief-result").textContent += " " + d.note;
+  } catch (err) {
+    vSetState("paused", "Couldn't reach the server"); vError("Something went wrong sending that. Your text is still here, so try again.");
+  } finally { vEl("v-fill").disabled = false; }
+}
+
+$("mic-btn").addEventListener("click", e => openVoice(e.currentTarget));
+$("voice-btn")?.addEventListener("click", e => openVoice(e.currentTarget));
+$("v-fill").addEventListener("click", fillFromVoice);
+$("v-cancel").addEventListener("click", closeVoice);
+$("v-close").addEventListener("click", closeVoice);
+$("v-clear").addEventListener("click", () => { vEl("v-text").value = ""; vEl("v-interim").textContent = ""; vError(""); vEl("v-text").focus(); });
+$("v-toggle").addEventListener("click", () => { if (V.state === "listening") { vStop(); vSetState("paused"); } else vStart(); });
+$("voice").addEventListener("mousedown", e => { if (e.target === $("voice")) closeVoice(); });
+document.addEventListener("keydown", e => {
+  if ($("voice").hidden) return;
+  if (e.key === "Escape") { closeVoice(); return; }
+  if (e.key === "Tab") {  // keep focus inside the sheet
+    const f = [...$("voice").querySelectorAll("button:not([hidden]):not(:disabled), textarea")];
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+});
 
 /* ---------- Shared results plumbing ---------- */
 function showResults(on) { const e = $("results-empty"), b = $("results-body"); if (e) e.hidden = on; if (b) b.hidden = !on; }
@@ -279,19 +360,6 @@ async function runCustomer() {
 if (PAGE === "customer") {
   form.addEventListener("submit", e => { e.preventDefault(); if (validate()) submitWith(form.querySelector("[type=submit]"), runCustomer); });
 
-  /* speak your needs: fill this form directly, whatever the router thinks the role is */
-  if (SR) {
-    $("voice-card").hidden = false;
-    const vb = $("voice-btn");
-    vb.addEventListener("click", () => listen(vb, async text => {
-      $("brief-input").value = text;
-      try { const d = await post("/api/parse-intent/", { prompt: text }); applyBrief(d.parsed, d.found); }
-      catch (e) { const box = $("brief-result"); box.hidden = false; box.className = "brief-result warn"; box.textContent = "Couldn't read that. Try again or type it in."; }
-    }, err => {
-      const box = $("brief-result"); box.hidden = false; box.className = "brief-result warn";
-      box.textContent = err === "not-allowed" ? "Allow microphone access in your browser to use voice." : "Didn't catch that. Tap the mic and try again.";
-    }));
-  }
 
   /* read the top matches aloud */
   if (window.speechSynthesis) {
