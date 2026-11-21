@@ -7,15 +7,23 @@
   <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    <link rel="icon" type="image/svg+xml" href="{% static 'img/favicon.svg' %}">
 </head>
 <body data-page="{% block page_key %}{% endblock %}" data-required="{% block required %}{% endblock %}">
   <a class="skip" href="#main">Skip to content</a>
 
     <header class="topbar">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true">OP</span>
+      <svg class="brand-logo" viewBox="0 0 40 40" aria-hidden="true">
+        <defs><clipPath id="op-fibre"><path d="M21.5 4a16 16 0 0 1 0 32z"/></clipPath></defs>
+        <path d="M18.5 4a16 16 0 0 0 0 32z" fill="#E9B44C"/>
+        <g clip-path="url(#op-fibre)" fill="#E9B44C">
+          <rect x="21" y="4.9" width="17" height="2.6"/><rect x="21" y="9.5" width="17" height="2.6"/><rect x="21" y="14.1" width="17" height="2.6"/>
+          <rect x="21" y="18.7" width="17" height="2.6"/><rect x="21" y="23.3" width="17" height="2.6"/><rect x="21" y="27.9" width="17" height="2.6"/><rect x="21" y="32.5" width="17" height="2.6"/>
+        </g>
+      </svg>
       <div class="brand-text">
-        <div class="brand-name">OptiProtein NG</div>
+                <div class="brand-name">Pro50 <span></span></div>
         <div class="brand-sub">ProExtend-50 market tool</div>
       </div>
     </div>

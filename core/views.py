@@ -1,8 +1,10 @@
 import json
+import logging
 import os
 import re
 import urllib.error
 import urllib.request
+from django.conf import settings
 from django.db.models import Count
 from django.http import JsonResponse
 from django.shortcuts import render
@@ -200,10 +202,13 @@ def api_parse_intent(request):
 
 
 
-# ---------- AI form filling (used by the voice sheet) ----------
-# Set these in your environment, never in front-end code:
-#   AI_PROVIDER=anthropic (default) or openai       AI_API_KEY=...   (ANTHROPIC_API_KEY / OPENAI_API_KEY also work)
-#   AI_MODEL=...   AI_BASE_URL=... (optional; any OpenAI-compatible server works with AI_PROVIDER=openai)
+# Default provider is Amazon Bedrock (Converse API). boto3 finds credentials by itself from the environment:
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN   (temporary CLI credentials)
+#   or AWS_BEARER_TOKEN_BEDROCK                                      (Bedrock short-term API key)
+#   AWS_REGION=us-east-1   BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0   (use any model your account can invoke)
+# Other providers still work: AI_PROVIDER=anthropic|openai with AI_API_KEY (and optional AI_MODEL, AI_BASE_URL).
+logger = logging.getLogger(__name__)
+DEFAULT_BEDROCK_MODEL = "us.amazon.nova-lite-v1:0"
 def _f(kind, desc, lo=None, hi=None, options=None):
     return {"kind": kind, "desc": desc, "lo": lo, "hi": hi, "options": options}
 
@@ -254,20 +259,45 @@ def _ai_prompt(page):
 
 import boto3
 
-bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
-
-def _call_llm(system, user):
-    model_id = os.environ.get("AI_MODEL", "amazon.nova-lite-v1:0")
-    response = bedrock.converse(
-        modelId=model_id,
+def _call_bedrock(system, user):
+    print("Lie to his nigas ")
+    import boto3
+    from botocore.config import Config
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+    client = boto3.client("bedrock-runtime", region_name=region,
+                          config=Config(connect_timeout=8, read_timeout=25, retries={"max_attempts": 1}))
+    resp = client.converse(
+        modelId=os.environ.get("BEDROCK_MODEL_ID", DEFAULT_BEDROCK_MODEL),
         system=[{"text": system}],
         messages=[{"role": "user", "content": [{"text": user}]}],
-        inferenceConfig={"maxTokens": 700, "temperature": 0.0},
+        inferenceConfig={"maxTokens": 700, "temperature": 0},
     )
-    text = response["output"]["message"]["content"][0]["text"]
+    return "".join(block.get("text", "") for block in resp["output"]["message"]["content"])
+
+def _call_http_llm(provider, system, user):
+    key = os.environ.get("AI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY" if provider == "anthropic" else "OPENAI_API_KEY")
+    if not key:
+        raise RuntimeError("no API key configured")
+    if provider == "openai":
+        base = os.environ.get("AI_BASE_URL", "https://api.openai.com").rstrip("/")
+        url, headers = base + "/v1/chat/completions", {"Authorization": "Bearer " + key}
+        body = {"model": os.environ.get("AI_MODEL", "gpt-4o-mini"), "temperature": 0, "response_format": {"type": "json_object"},
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    else:
+        base = os.environ.get("AI_BASE_URL", "https://api.anthropic.com").rstrip("/")
+        url, headers = base + "/v1/messages", {"x-api-key": key, "anthropic-version": "2023-06-01"}
+        body = {"model": os.environ.get("AI_MODEL", "claude-sonnet-5-5"), "max_tokens": 700, "system": system,
+                "messages": [{"role": "user", "content": user}]}
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST", headers={**headers, "content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        data = json.loads(resp.read().decode())
+    return data["choices"][0]["message"]["content"] if provider == "openai" else "".join(b.get("text", "") for b in data["content"])
+
+def _call_llm(system, user):
+    provider = os.environ.get("AI_PROVIDER", "bedrock").lower()
+    text = _call_bedrock(system, user) if provider == "bedrock" else _call_http_llm(provider, system, user)
     a, b = text.find("{"), text.rfind("}")
-    if a < 0 or b < a:
-        raise ValueError("model returned no JSON")
+    if a < 0 or b < a: raise ValueError("model returned no JSON")
     return json.loads(text[a:b + 1])
 
 def _clean_ai(page, raw):
@@ -299,6 +329,7 @@ def _clean_ai(page, raw):
         except (TypeError, ValueError):
             continue
         parsed[k] = v
+    print(f"tjhe parsed {parsed}")
     return parsed
 
 @require_http_methods(["POST"])
@@ -307,13 +338,26 @@ def api_ai_fill(request):
     d = _body(request)
     page = d.get("page") if d.get("page") in AI_SPECS else "customer"
     transcript = _text(d, "transcript", "")[:6000]
+    print(transcript)
     if not transcript:
         return JsonResponse({"parsed": {}, "found": [], "engine": "none", "note": "Nothing to read."})
     try:
+        print("sayy")
         parsed = _clean_ai(page, _call_llm(_ai_prompt(page), transcript))
         return JsonResponse({"parsed": parsed, "found": list(parsed), "engine": "ai"})
-    except Exception as exc:  # no key, network, bad JSON: fall back so the user still gets something
+    except Exception as exc:  # credentials, network, model access, bad JSON: fall back so the user still gets something
+        logger.warning("AI fill failed: %s: %s", type(exc).__name__, exc)
         rules, _ = _rule_parse(transcript)
         parsed = {k: v for k, v in rules.items() if k in AI_SPECS[page]}
-        return JsonResponse({"parsed": parsed, "found": list(parsed), "engine": "rules",
-                             "note": "AI is unavailable right now, so we used basic matching. Check the form."})
+        resp = getattr(exc, "response", None)
+        code = resp.get("Error", {}).get("Code", "") if isinstance(resp, dict) else ""
+        name = type(exc).__name__
+        if name in ("NoCredentialsError", "PartialCredentialsError") or code in ("ExpiredTokenException", "ExpiredToken", "UnrecognizedClientException", "InvalidSignatureException", "InvalidClientTokenId"):
+            why = "AWS credentials are missing or expired. Refresh them, restart the server, and try again."
+        elif code in ("AccessDeniedException", "ValidationException", "ResourceNotFoundException"):
+            why = "Bedrock refused the request. Check BEDROCK_MODEL_ID and that this account can use that model in this region."
+        else:
+            why = "The AI service didn't respond."
+        out = {"parsed": parsed, "found": list(parsed), "engine": "rules", "note": why + " We used basic matching, so check the form."}
+        if settings.DEBUG: out["detail"] = f"{name}: {str(exc)[:300]}"
+        return JsonResponse(out)

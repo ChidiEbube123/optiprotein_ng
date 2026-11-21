@@ -16,6 +16,7 @@ class Corridor(models.Model):
     cac_per_outlet_ngn = models.FloatField()
     data_confidence = models.CharField(max_length=20, default='Medium')
     data_source_tag = models.CharField(max_length=100)
+    last_synced = models.DateTimeField(null=True, blank=True)
 
 class SupplierHub(models.Model):
     name = models.CharField(max_length=120)

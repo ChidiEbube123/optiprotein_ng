@@ -71,7 +71,8 @@ def evaluate_all_corridors(corridors_qs, demand_counts_by_area, dry_sku_cost_ngn
             "opportunity_score": score, "shap_breakdown": shap, "monthly_dry_tons": tons,
             "cac_total_ngn": max(8, int(round(c.estimated_outlets * 0.18))) * c.cac_per_outlet_ngn,
             "wholesale_margin_pct": round(margin_pct, 1), "annual_co2e_avoided_tons": econ["annual_co2e_avoided_tons"],
-            "data_confidence": c.data_confidence, "data_source_tag": c.data_source_tag, **mc
+                        "data_confidence": c.data_confidence, "data_source_tag": c.data_source_tag,
+            "last_synced": c.last_synced.strftime("%d %b %Y") if c.last_synced else None, **mc
         })
 
     if len(evaluated) >= 3:
@@ -227,18 +228,3 @@ def match_customer_restaurants(restaurants_qs, city_or_lga, age, health_goal, ma
         })
     res.sort(key=lambda x: x["match_pct"], reverse=True)
     return res[:limit]
-
-def match_customer_restaurants(restaurants_qs, city_or_lga, age, health_goal, max_budget_ngn):
-    res = []
-    for r in restaurants_qs:
-        score = 50.0
-        if city_or_lga.lower() in r.lga.lower() or city_or_lga.lower() in r.city.lower(): score += 30.0
-        if r.dish_price_ngn <= max_budget_ngn: score += 20.0
-        res.append({
-            "id": r.id, "name": r.name, "lga": r.lga, "city": r.city, "state": r.state,
-            "signature_dish": r.signature_dish, "dish_price_ngn": r.dish_price_ngn,
-            "health_tags": r.health_tags.split(","), "rating": r.rating, "address": r.address,
-            "match_pct": min(99, int(score))
-        })
-    res.sort(key=lambda x: x["match_pct"], reverse=True)
-    return res[:6]
